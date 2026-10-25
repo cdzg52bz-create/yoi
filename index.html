@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>酔い度メーター</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root {
+  --bg: #0E1117;
+  --fg: #EEF1F6;
+  --muted: #A3ADBF;
+  --line: rgba(255,255,255,.2);
+  --glass: rgba(14,17,23,.62);
+  --accent: #FF7452;
+  --on-accent: #1B0F0B;
+  --z1: #5BB5A2; --z2: #D9B450; --z3: #EE9A4E; --z4: #FF7452; --z5: #D8485B;
+  --font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); overflow: hidden; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+[hidden] { display: none !important; }
+
+#app { position: fixed; inset: 0; }
+#video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+#video.mirror { transform: scaleX(-1); }
+#overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.hud {
+  position: absolute; z-index: 3;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  top: max(12px, env(safe-area-inset-top, 0px));
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border-radius: 16px; padding: 12px 16px 14px;
+}
+.hud-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.score { display: flex; align-items: baseline; font-family: var(--font-display); line-height: 1; }
+#num { font-weight: 800; font-size: 60px; font-variant-numeric: tabular-nums; min-width: 1.2em; }
+.unit { font-weight: 600; font-size: 22px; margin-left: 4px; }
+.lv { text-align: right; min-width: 0; }
+#lvname { font-family: var(--font-display); font-weight: 800; font-size: 22px; line-height: 1.2; }
+#basechip { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.gauge { position: relative; margin-top: 12px; padding-top: 5px; }
+.seg-row { display: flex; gap: 3px; height: 8px; }
+.seg { border-radius: 3px; opacity: .85; }
+.z1 { background: var(--z1); } .z2 { background: var(--z2); } .z3 { background: var(--z3); } .z4 { background: var(--z4); } .z5 { background: var(--z5); }
+#marker { position: absolute; top: 0; width: 4px; height: 18px; border-radius: 2px; background: #fff; transform: translateX(-50%); left: 0; box-shadow: 0 0 0 2px rgba(0,0,0,.45); transition: left .25s ease-out; }
+.seg-names { display: flex; gap: 3px; margin-top: 6px; }
+.seg-names span { text-align: center; font-size: 10.5px; color: var(--muted); white-space: nowrap; min-width: 0; }
+.seg-names .on { color: var(--fg); font-weight: 700; }
+.dbg { margin-top: 10px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; line-height: 1.5; }
+
+#msg {
+  position: absolute; z-index: 3; left: 16px; right: 16px; top: 34%;
+  text-align: center; pointer-events: none;
+  font-family: var(--font-display); font-weight: 800; font-size: 18px;
+  text-shadow: 0 2px 14px rgba(0,0,0,.7);
+}
+#msg.pill { top: auto; bottom: calc(max(20px, env(safe-area-inset-bottom, 0px)) + 118px); }
+#msg.pill span { display: inline-block; background: var(--glass); padding: 8px 16px; border-radius: 999px; font-family: var(--font-body); font-weight: 500; font-size: 14px; text-shadow: none; }
+#msg.big { font-size: clamp(26px, 8vw, 40px); line-height: 1.35; text-wrap: balance; }
+
+#count {
+  position: absolute; z-index: 4; inset: 0; display: grid; place-items: center; pointer-events: none;
+  font-family: var(--font-display); font-weight: 800; font-size: 42vmin; line-height: 1;
+  color: #fff; text-shadow: 0 6px 40px rgba(0,0,0,.55);
+}
+#count.tick { animation: pop 1s ease-out both; }
+@keyframes pop { 0% { transform: scale(1.5); opacity: 0; } 25% { transform: scale(1); opacity: 1; } 100% { transform: scale(.9); opacity: .15; } }
+#flash { position: absolute; z-index: 5; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .5s ease-out; }
+#flash.on { opacity: 1; transition: none; }
+
+.bar {
+  position: absolute; z-index: 3; left: 0; right: 0;
+  bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  padding-inline: max(20px, env(safe-area-inset-left, 0px)) max(20px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+}
+.sidebtn { min-height: 44px; padding: 0 16px; border-radius: 22px; background: var(--glass); border: 1px solid var(--line); font-size: 13px; font-weight: 700; }
+.sidebtn.l { justify-self: start; } .sidebtn.r { justify-self: end; }
+.shutter { width: 78px; height: 78px; border-radius: 50%; border: 4px solid #fff; background: var(--accent); box-shadow: inset 0 0 0 5px var(--bg); }
+.shutter:disabled { opacity: .45; }
+
+.screen { position: absolute; z-index: 6; inset: 0; background: var(--bg); display: grid; place-items: center; padding: 24px max(20px, env(safe-area-inset-right, 0px)); overflow: auto; }
+.col { width: 100%; max-width: 420px; display: grid; gap: 16px; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(34px, 9vw, 46px); line-height: 1.15; margin: 0; letter-spacing: .02em; }
+.col p { margin: 0; color: var(--muted); line-height: 1.7; }
+.col .small { font-size: 12.5px; }
+.btn { min-height: 52px; border-radius: 12px; border: 1px solid var(--line); background: transparent; font-weight: 700; font-size: 16px; padding: 0 20px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn:disabled { opacity: .5; }
+#status { min-height: 1.6em; color: var(--fg); font-size: 14px; }
+#shot { width: 100%; max-height: 66vh; object-fit: contain; border-radius: 12px; background: #000; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (prefers-reduced-motion: reduce) { #count.tick { animation: none; } #marker { transition: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <video id="video" playsinline muted></video>
+  <canvas id="overlay"></canvas>
+
+  <div class="hud" id="hud" hidden>
+    <div class="hud-row">
+      <div class="score"><span id="num">--</span><span class="unit">度</span></div>
+      <div class="lv"><div id="lvname">測定中…</div><span id="basechip">基準なしで推定</span></div>
+    </div>
+    <div class="gauge">
+      <div class="seg-row" id="segs"></div>
+      <div id="marker"></div>
+      <div class="seg-names" id="names"></div>
+    </div>
+    <div class="dbg" id="dbg" hidden></div>
+  </div>
+
+  <div id="msg" hidden></div>
+  <div id="count"></div>
+  <div id="flash"></div>
+
+  <div class="bar" id="bar" hidden>
+    <button class="sidebtn l" id="flip" type="button">カメラ切替</button>
+    <button class="shutter" id="shutter" type="button" aria-label="思い出を撮る"></button>
+    <button class="sidebtn r" id="basebtn" type="button">しらふ基準</button>
+  </div>
+
+  <section class="screen" id="start">
+    <div class="col">
+      <h1>酔い度メーター</h1>
+      <p>カメラに顔を映すだけで、顔の赤みから酔い度をリアルタイムで表示します。しらふの基準は要りません。</p>
+      <p class="small">基準なしの推定は、顔のほかの部分と比べた頬や鼻の赤み、赤みのムラ、白目の赤みを使います。肌の色や照明で大きくぶれるので、あくまで遊びの目安です。映像はこの端末の中だけで処理します。お酒を飲んだあとは運転しないでください。</p>
+      <button class="btn primary" id="go" type="button">カメラを始める</button>
+      <p id="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <section class="screen" id="result" hidden>
+    <div class="col">
+      <img id="shot" alt="撮影した写真">
+      <div class="row2">
+        <button class="btn primary" id="save" type="button">保存</button>
+        <button class="btn" id="share" type="button" hidden>シェア</button>
+      </div>
+      <button class="btn" id="again" type="button">もう一度撮る</button>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const BASE_KEY = 'yoidoMeter.baseline.v2';
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const LEVELS = [
+  { max: 15, name: 'しらふ' }, { max: 35, name: 'ほろ酔い' }, { max: 55, name: 'いい気分' },
+  { max: 75, name: '出来上がり' }, { max: 101, name: '泥酔' }
+];
+const ZB = [0, 15, 35, 55, 75, 100];
+const levelIndex = (s) => { for (let i = 0; i < LEVELS.length; i++) if (s < LEVELS[i].max) return i; return 4; };
+
+/* ---------- state ---------- */
+const video = $('video'), ov = $('overlay'), octx = ov.getContext('2d');
+const work = document.createElement('canvas');
+let wctx = null, ww = 480, wh = 640;
+let landmarker = null, stream = null, facing = 'user', mirror = true;
+let running = false, busy = false, lastT = -1;
+let feat = null, frames = 0, lastFace = 0, smoothScore = 0, ready = false;
+let lastMeasure = null, hint = '', baseline = null;
+let shotBlob = null, shotUrl = null;
+
+try { baseline = JSON.parse(localStorage.getItem(BASE_KEY) || 'null'); } catch (e) { baseline = null; }
+
+/* ---------- gauge ---------- */
+(function buildGauge() {
+  const names = ['しらふ', 'ほろ酔い', 'いい気分', '出来上がり', '泥酔'];
+  $('segs').innerHTML = names.map((_, i) => `<span class="seg z${i + 1}" style="flex:${ZB[i + 1] - ZB[i]}"></span>`).join('');
+  $('names').innerHTML = names.map((n, i) => `<span style="flex:${ZB[i + 1] - ZB[i]}">${n}</span>`).join('');
+})();
+
+/* ---------- colour ---------- */
+const LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+const lf = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+let LL = 0, AA = 0, BB = 0;
+function toLab(r, g, b) {
+  const R = LIN[r], G = LIN[g], B = LIN[b];
+  const fx = lf((0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / 0.95047);
+  const fy = lf(0.2126729 * R + 0.7151522 * G + 0.072175 * B);
+  const fz = lf((0.0193339 * R + 0.119192 * G + 0.9503041 * B) / 1.08883);
+  LL = 116 * fy - 16; AA = 500 * (fx - fy); BB = 200 * (fy - fz);
+}
+function skinOk(r, g, b) {
+  if (LL <= 22 || LL > 88) return false;
+  const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+  const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+  return cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173;
+}
+function collect(cx, cy, r, out, skinOnly) {
+  const x0 = Math.max(0, Math.floor(cx - r)), y0 = Math.max(0, Math.floor(cy - r));
+  const x1 = Math.min(ww - 1, Math.ceil(cx + r)), y1 = Math.min(wh - 1, Math.ceil(cy + r));
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  if (w < 2 || h < 2) return;
+  const d = wctx.getImageData(x0, y0, w, h).data, r2 = r * r;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = x0 + x - cx, dy = y0 + y - cy;
+    if (dx * dx + dy * dy > r2) continue;
+    const p = (y * w + x) * 4;
+    toLab(d[p], d[p + 1], d[p + 2]);
+    if (skinOnly && !skinOk(d[p], d[p + 1], d[p + 2])) continue;
+    out.L.push(LL); out.a.push(AA); out.b.push(BB);
+  }
+}
+const newAcc = () => ({ L: [], a: [], b: [] });
+function tmean(arr) {
+  if (arr.length < 30) return null;
+  const a = Float32Array.from(arr).sort();
+  const lo = Math.floor(a.length * 0.1), hi = Math.ceil(a.length * 0.9);
+  let s = 0; for (let i = lo; i < hi; i++) s += a[i];
+  return s / (hi - lo);
+}
+function sigma(arr) {
+  const a = Float32Array.from(arr).sort();
+  return (a[Math.floor(a.length * 0.75)] - a[Math.floor(a.length * 0.25)]) / 1.349;
+}
+const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+
+/* ---------- measurement ---------- */
+function measure(lm) {
+  const P = (i) => ({ x: lm[i].x * ww, y: lm[i].y * wh });
+  const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const W = dist(P(234), P(454));
+  if (W < ww * 0.2) return { ok: false, reason: 'far' };
+
+  const zones = {
+    fh: { ...lerp(P(10), P(9), 0.5), r: 0.085 * W },
+    cl: { ...P(50), r: 0.07 * W },
+    cr: { ...P(280), r: 0.07 * W },
+    no: { ...P(4), r: 0.05 * W }
+  };
+  const raw = newAcc();
+  [zones.fh, zones.cl, zones.cr].forEach((z) => collect(z.x, z.y, z.r, raw, false));
+  if (raw.L.length < 30 || mean(raw.L) < 35) return { ok: false, reason: 'dark', zones };
+  const fh = newAcc(), cl = newAcc(), cr = newAcc(), no = newAcc();
+  collect(zones.fh.x, zones.fh.y, zones.fh.r, fh, true);
+  collect(zones.cl.x, zones.cl.y, zones.cl.r, cl, true);
+  collect(zones.cr.x, zones.cr.y, zones.cr.r, cr, true);
+  collect(zones.no.x, zones.no.y, zones.no.r, no, true);
+
+  const aF = tmean(fh.a), aC = tmean(cl.a.concat(cr.a)), aN = tmean(no.a);
+  if (aF == null || aC == null || aN == null) return { ok: false, reason: 'skin', zones };
+
+  const uA = fh.a.concat(cl.a, cr.a, no.a), uB = fh.b.concat(cl.b, cr.b, no.b), uL = fh.L.concat(cl.L, cr.L, no.L);
+  const Lm = mean(uL);
+  if (Lm < 35) return { ok: false, reason: 'dark', zones };
+  const hue = Math.atan2(mean(uB), mean(uA)) * 180 / Math.PI;
+
+  let sclera = null;
+  if (lm.length >= 478) {
+    const vals = [];
+    [{ o: 33, i: 133 }, { o: 263, i: 362 }].forEach((e) => {
+      const mid = lerp(P(e.o), P(e.i), 0.5), span = dist(P(e.o), P(e.i));
+      const ir = [468, 473].map((k) => P(k)).sort((p, q) => dist(p, mid) - dist(q, mid))[0];
+      if (dist(ir, mid) > 0.6 * span) return;
+      [e.o, e.i].forEach((ci) => {
+        const c = lerp(ir, P(ci), 0.62), acc = newAcc();
+        collect(c.x, c.y, Math.max(2, 0.012 * W), acc, false);
+        if (acc.a.length < 8) return;
+        const idx = acc.L.map((_, k) => k).sort((p, q) => acc.L[q] - acc.L[p]).slice(0, Math.floor(acc.L.length / 2));
+        if (mean(idx.map((k) => acc.L[k])) < 52) return;
+        vals.push(mean(idx.map((k) => acc.a[k])));
+      });
+    });
+    if (vals.length >= 2) { vals.sort((p, q) => p - q); sclera = vals[Math.floor(vals.length / 2)]; }
+  }
+
+  return { ok: true, zones, ft: { c1: aC - aF, c2: aN - aF, hue, spread: sigma(uA), sclera } };
+}
+
+function computeScore(ft, base) {
+  const f = (v, off, div) => clamp((v - off) / div, 0, 1.5);
+  const parts = [];
+  if (base) {
+    parts.push([0.34, f(ft.c1 - base.c1, 0.8, 5)], [0.24, f(ft.c2 - base.c2, 0.8, 5)],
+      [0.14, f(base.hue - ft.hue, 1.5, 8)], [0.16, f(ft.spread - base.spread, 0.3, 1.8)]);
+    if (ft.sclera != null && base.sclera != null) parts.push([0.12, f(ft.sclera - base.sclera, 0.8, 5)]);
+  } else {
+    parts.push([0.34, f(ft.c1, 5, 7)], [0.24, f(ft.c2, 5, 7)],
+      [0.14, f(48 - ft.hue, 0, 10)], [0.16, f(ft.spread, 2.5, 3)]);
+    if (ft.sclera != null) parts.push([0.12, f(ft.sclera, 7, 8)]);
+  }
+  const ws = parts.reduce((s, p) => s + p[0], 0);
+  const raw = Math.max(0, parts.reduce((s, p) => s + p[0] * p[1], 0) / ws - 0.1) / 0.9;
+  return clamp(100 * (1 - Math.exp(-1.8 * raw)), 0, 100);
+}
+
+/* ---------- camera ---------- */
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nomedia');
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  mirror = facing === 'user';
+  video.classList.toggle('mirror', mirror);
+  const vw = video.videoWidth || 720, vh = video.videoHeight || 1280;
+  ww = 480; wh = Math.round(480 * vh / vw);
+  work.width = ww; work.height = wh;
+  wctx = work.getContext('2d', { willReadFrequently: true });
+  feat = null; frames = 0; ready = false; lastT = -1;
+}
+
+async function initLandmarker() {
+  if (landmarker) return;
+  const why = (e) => String((e && (e.message || e.name)) || e).slice(0, 120);
+  let fileset;
+  try { fileset = await FilesetResolver.forVisionTasks(WASM); } catch (e) { throw new Error('wasm: ' + why(e)); }
+  try {
+    const head = await fetch(MODEL, { method: 'GET' });
+    if (!head.ok) throw new Error('HTTP ' + head.status);
+    const buf = new Uint8Array(await head.arrayBuffer());
+    const make = (delegate) => FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetBuffer: buf, delegate },
+      runningMode: 'VIDEO', numFaces: 1
+    });
+    try { landmarker = await make('GPU'); } catch (e1) { landmarker = await make('CPU'); }
+  } catch (e) { throw new Error('model: ' + why(e)); }
+}
+
+/* ---------- HUD / overlay ---------- */
+let lastShown = '';
+function renderHud() {
+  const show = ready ? String(Math.round(smoothScore)) : '--';
+  const li = ready ? levelIndex(smoothScore) : -1;
+  const key = show + '|' + (baseline ? 1 : 0);
+  if (key !== lastShown) {
+    lastShown = key;
+    $('num').textContent = show;
+    $('num').style.color = ready ? `var(--z${li + 1})` : 'var(--muted)';
+    $('lvname').textContent = ready ? LEVELS[li].name : '測定中…';
+    $('basechip').textContent = baseline ? 'しらふ基準あり' : '基準なしで推定';
+    $('marker').style.left = ready ? smoothScore + '%' : '0%';
+    $('marker').style.opacity = ready ? 1 : 0;
+    Array.prototype.forEach.call($('names').children, (el, i) => el.classList.toggle('on', i === li));
+    $('basebtn').textContent = baseline ? '基準を解除' : 'しらふ基準';
+  }
+}
+
+function mapPt(x, y) {
+  const vw = video.videoWidth, vh = video.videoHeight, cw = ov.clientWidth, ch = ov.clientHeight;
+  const sc = Math.max(cw / vw, ch / vh), ox = (cw - vw * sc) / 2, oy = (ch - vh * sc) / 2;
+  return { x: ox + (mirror ? 1 - x : x) * vw * sc, y: oy + y * vh * sc, k: (vw / ww) * sc };
+}
+function drawOverlay() {
+  const dpr = window.devicePixelRatio || 1, cw = ov.clientWidth, ch = ov.clientHeight;
+  if (ov.width !== Math.round(cw * dpr) || ov.height !== Math.round(ch * dpr)) { ov.width = Math.round(cw * dpr); ov.height = Math.round(ch * dpr); }
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, cw, ch);
+  const m = lastMeasure;
+  if (!m || !m.zones) return;
+  octx.lineWidth = 1.5; octx.setLineDash([5, 4]); octx.strokeStyle = 'rgba(255,255,255,.6)';
+  Object.keys(m.zones).forEach((k) => {
+    const z = m.zones[k], p = mapPt(z.x / ww, z.y / wh);
+    octx.beginPath(); octx.arc(p.x, p.y, z.r * p.k, 0, Math.PI * 2); octx.stroke();
+  });
+}
+
+function setMsg(text, mode) {
+  const el = $('msg');
+  if (!text) { el.hidden = true; el.textContent = ''; return; }
+  el.hidden = false; el.className = mode || 'pill';
+  if (mode === 'big') el.textContent = text; else el.innerHTML = '<span></span>', el.firstChild.textContent = text;
+}
+
+/* ---------- main loop ---------- */
+function loop() {
+  if (!running) return;
+  requestAnimationFrame(loop);
+  if (video.readyState < 2 || video.currentTime === lastT || !landmarker) return;
+  lastT = video.currentTime;
+  const now = performance.now();
+  wctx.drawImage(video, 0, 0, ww, wh);
+  let res = null;
+  try { res = landmarker.detectForVideo(video, now); } catch (e) { return; }
+  const lm = res && res.faceLandmarks && res.faceLandmarks[0];
+  lastMeasure = null; hint = '';
+  if (lm) {
+    const m = measure(lm);
+    lastMeasure = m;
+    if (m.ok) {
+      lastFace = now; frames++;
+      const a = frames === 1 ? 1 : 0.12, f = m.ft;
+      if (!feat) feat = { ...f };
+      else {
+        feat.c1 += (f.c1 - feat.c1) * a; feat.c2 += (f.c2 - feat.c2) * a;
+        feat.hue += (f.hue - feat.hue) * a; feat.spread += (f.spread - feat.spread) * a;
+        if (f.sclera != null) feat.sclera = feat.sclera == null ? f.sclera : feat.sclera + (f.sclera - feat.sclera) * a;
+      }
+    } else hint = m.reason;
+  } else hint = 'noface';
+
+  if (now - lastFace > 1500) { frames = 0; feat = null; ready = false; }
+  if (feat && frames >= 20) {
+    const s = computeScore(feat, baseline);
+    smoothScore = ready ? smoothScore * 0.85 + s * 0.15 : s;
+    ready = true;
+  }
+  if (!busy) {
+    const texts = { noface: '顔を画面の中に入れてください', far: 'もう少し近づいてください', dark: 'もう少し明るい場所で映してください', skin: '正面を向いてください' };
+    setMsg(hint && now - lastFace > 600 ? texts[hint] : '', 'pill');
+  }
+  renderHud();
+  if (!$('dbg').hidden) {
+    const n = (v) => (v == null ? '-' : v.toFixed(1));
+    $('dbg').textContent = feat
+      ? `頬−額 ${n(feat.c1)} / 鼻−額 ${n(feat.c2)} / 色相 ${n(feat.hue)} / ムラ ${n(feat.spread)} / 白目 ${n(feat.sclera)}`
+      : '数値なし（顔が映っていません）';
+  }
+  drawOverlay();
+}
+
+/* ---------- shot ---------- */
+async function shoot() {
+  if (busy || !running) return;
+  busy = true; $('shutter').disabled = true;
+  setMsg('今の思い出を写真に収めよう！', 'big');
+  await sleep(1600);
+  const c = $('count');
+  for (const n of [3, 2, 1]) {
+    c.classList.remove('tick'); void c.offsetWidth;
+    c.textContent = n; c.classList.add('tick');
+    await sleep(1000);
+  }
+  c.textContent = ''; c.classList.remove('tick');
+  setMsg('');
+  const fl = $('flash'); fl.classList.add('on'); void fl.offsetWidth; fl.classList.remove('on');
+  await capture();
+  busy = false; $('shutter').disabled = false;
+}
+
+async function capture() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const c = document.createElement('canvas'); c.width = vw; c.height = vh;
+  const g = c.getContext('2d');
+  g.save(); if (mirror) { g.translate(vw, 0); g.scale(-1, 1); } g.drawImage(video, 0, 0, vw, vh); g.restore();
+
+  const k = Math.min(vw, vh) / 720, bandH = 200 * k;
+  const grad = g.createLinearGradient(0, vh - bandH, 0, vh);
+  grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,.7)');
+  g.fillStyle = grad; g.fillRect(0, vh - bandH, vw, bandH);
+  try { await document.fonts.load('800 40px "Shippori Mincho B1"'); } catch (e) { /* fallback font */ }
+  const serif = '"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho",serif';
+  const pad = 36 * k;
+  g.fillStyle = '#fff'; g.textBaseline = 'alphabetic';
+  if (ready) {
+    const s = Math.round(smoothScore), li = levelIndex(s);
+    g.font = `800 ${96 * k}px ${serif}`; g.textAlign = 'left';
+    g.fillText(String(s), pad, vh - pad - 6 * k);
+    const nw = g.measureText(String(s)).width;
+    g.font = `600 ${34 * k}px ${serif}`; g.fillText('度', pad + nw + 8 * k, vh - pad - 6 * k);
+    g.font = `800 ${34 * k}px ${serif}`; g.fillText(LEVELS[li].name, pad + nw + 8 * k + 50 * k, vh - pad - 6 * k);
+  }
+  const d = new Date(), z = (n) => String(n).padStart(2, '0');
+  g.font = `600 ${28 * k}px ${serif}`; g.textAlign = 'right';
+  g.fillText(`${d.getFullYear()}.${z(d.getMonth() + 1)}.${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`, vw - pad, vh - pad - 6 * k);
+
+  shotBlob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+  if (shotUrl) URL.revokeObjectURL(shotUrl);
+  shotUrl = URL.createObjectURL(shotBlob);
+  $('shot').src = shotUrl;
+  $('share').hidden = !(navigator.canShare && navigator.canShare({ files: [new File([shotBlob], 'yoi.jpg', { type: 'image/jpeg' })] }));
+  $('result').hidden = false;
+}
+
+/* ---------- events ---------- */
+$('go').addEventListener('click', async () => {
+  const st = $('status'), btn = $('go');
+  btn.disabled = true; st.textContent = 'カメラを起動しています…';
+  try { await startCamera(); } catch (e) {
+    st.textContent = e && e.message === 'nomedia'
+      ? 'この環境ではカメラが使えません。HTTPS（または localhost）で開いてください。'
+      : 'カメラが使えません。ブラウザの設定でカメラを許可してください。';
+    btn.disabled = false; return;
+  }
+  st.textContent = '顔認識モデルを読み込んでいます…';
+  try { await initLandmarker(); } catch (e) {
+    st.textContent = '顔認識モデルを読み込めませんでした。ネットワーク接続を確認してもう一度お試しください。（' + ((e && e.message) || e) + '）';
+    btn.disabled = false; return;
+  }
+  $('start').hidden = true; $('hud').hidden = false; $('bar').hidden = false;
+  running = true; loop();
+});
+
+$('hud').addEventListener('click', () => { $('dbg').hidden = !$('dbg').hidden; });
+$('shutter').addEventListener('click', shoot);
+$('flip').addEventListener('click', async () => {
+  facing = facing === 'user' ? 'environment' : 'user';
+  try { await startCamera(); } catch (e) { facing = facing === 'user' ? 'environment' : 'user'; }
+});
+$('basebtn').addEventListener('click', () => {
+  if (baseline) { baseline = null; try { localStorage.removeItem(BASE_KEY); } catch (e) { /* ignore */ } lastShown = ''; return; }
+  if (!ready || !feat) { setMsg('顔を映してから押してください', 'pill'); setTimeout(() => { if (!busy) setMsg(''); }, 2000); return; }
+  baseline = { ...feat }; lastShown = '';
+  try { localStorage.setItem(BASE_KEY, JSON.stringify(baseline)); } catch (e) { /* ignore */ }
+  setMsg('いまの顔をしらふ基準にしました', 'pill'); setTimeout(() => { if (!busy) setMsg(''); }, 2000);
+});
+$('again').addEventListener('click', () => { $('result').hidden = true; });
+$('save').addEventListener('click', () => {
+  if (!shotUrl) return;
+  const a = document.createElement('a'); a.href = shotUrl; a.download = 'yoido-' + Date.now() + '.jpg';
+  document.body.appendChild(a); a.click(); a.remove();
+});
+$('share').addEventListener('click', async () => {
+  if (!shotBlob) return;
+  try { await navigator.share({ files: [new File([shotBlob], 'yoido.jpg', { type: 'image/jpeg' })], title: '酔い度メーター' }); } catch (e) { /* cancelled */ }
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden && running) lastT = -1; });
+</script>
+</body>
+</html>
