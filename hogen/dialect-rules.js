@@ -1,219 +1,146 @@
-// 形態素（kuromoji のトークン）に方言の法則を当てて言い直す。
-// Claude を使わないとき（お試しモード）の関西弁・博多弁で使う。
+// 文字の並びに方言の法則を当てて言い直す（辞書なし）。
+// Claude を使わないとき（お試しモード）の関西弁・博多弁で使う。上から順に当てる。
 
-const I_ROW = 'イキシチニヒミリギジビピ';
-const E_ROW = 'エケセテネヘメレゲゼデベペ';
+const END = '(?=[。、！？!?…\\s]|$)';
+const R = (src, to) => [new RegExp(src, 'g'), to];
+const past = (t) => (t === 'かった' ? 'かった' : '');
 
-const isEnd = (t) => !t || t.pos === '記号';
-const isPart = (t, ...ws) => !!t && t.pos === '助詞' && ws.includes(t.surface_form);
-const isFinalPart = (t, ...ws) => isPart(t, ...ws) && t.pos_detail_1 === '終助詞';
-const isAux = (t, base) => !!t && t.pos === '助動詞' && t.basic_form === base;
-const isVerb = (t) => !!t && t.pos === '動詞';
-const isNaiAux = (t) => isAux(t, 'ない') && ['ない', 'なかっ', 'なく'].includes(t.surface_form);
-// 「の」「ん」が説明の意味で使われているとき（行くんだ・行くのです）
-const isNoN = (t) => !!t && t.pos === '名詞' && t.pos_detail_1 === '非自立' && (t.surface_form === 'の' || t.surface_form === 'ん');
-const isMizenBeforeNai = (t, next) => isVerb(t) && t.conjugated_form.startsWith('未然') && isNaiAux(next);
-// 「〜ている」の「いる」と、縮まった「〜てる」
-const isTeIru = (t, prev) => isVerb(t) && t.pos_detail_1 === '非自立' && t.basic_form === 'いる' && isPart(prev, 'て', 'で');
-const isTeru = (t) => isVerb(t) && t.pos_detail_1 === '非自立' && (t.basic_form === 'てる' || t.basic_form === 'でる');
+// 「〜ない」が打ち消しではない言葉（仕方ない・少ない・しかない）
+const NOT_NEG = /(仕方|しょうが|しかた|情け|なさけ|申し訳|もうしわけ|もったい|違い|間違い|危|あぶ|少|すく|汚|きた|幼|おさ|切|せつ|はか|あどけ|そっけ|しか|ほか|つまん|ぎこち|頼り|たより|味気|あじけ|何気|なにげ|だらし|ろく|でも)$/;
+// 「〜いだ」が過去形になる動詞（泳いだ・脱いだ）
+const GU = '泳|脱|急|騒|稼|嗅|継|仰|研|漕|剥|担|紡|塞|防|凌|和|ぬ|およ|いそ|さわ|かせ';
+// だ・です を「や」にしない前の文字（読んだ・まだ・ただ・泳いだ）
+const NOT_COPULA = `(?<![んっまた]|(?:${GU})い)`;
+// 「〜てる」「〜てた」が「〜ている」の意味ではない動詞（捨てる・建てる）
+const TERU_VERB = '捨|建|育|当|立|慌|企|隔|果|充|宛|据|あ|す|た|そだ|あわ|へだ|は|おだ';
+// 「の・ん」の前がこれなら説明の「んだ」（行くんだ）。読んだ・飛んだの過去形と見分ける
+const EXPL = '[うくぐすつぬぶむるい]';
+// 「いる」の前に来る文字（〜にいる・〜はいない）
+const IRU = '(^|[にはがもで、。！？\\s])';
+// 形容詞の「か」言葉（博多：寒か・難しか）にしない「〜い」の名詞
+const NOT_ADJ = '嫌|違|幸|災|迷|戦|願|思|誓|扱|払|使|争|会|祝|占|伺|商|舞|笑|狙|間違';
 
-// 「いる」型の活用を、頭の音だけ差し替えて作る（おる・とる・どる）
-function iruLike(head, t, next) {
-  const f = t.conjugated_form;
-  if (f.startsWith('未然')) return head + 'ら';
-  if (f.startsWith('連用')) {
-    if (isAux(next, 'ます')) return head + 'り';
-    return head + 'っ';
-  }
-  if (f.startsWith('仮定')) return head + 'れ';
-  if (f.startsWith('命令')) return head + 'れ';
-  return head + 'る';
+// 打ち消し：行かない・食べない・起きない（あ・え・いの段 + ない）
+function negation(kansai) {
+  return [/([かがさたなばまらわきぎじちびみりえけげせぜてねべめれへ])な(いで(?:ください)?|い|かった|くて)/g,
+    (m, kana, tail, off, all) => {
+      const before = all.slice(Math.max(0, off - 12), off);
+      if (NOT_NEG.test(before + kana)) return m;
+      if (kana === 'が' && !new RegExp(`(${GU})$`).test(before)) return m; // お金がない は打ち消しの動詞ではない
+      if (tail.startsWith('いで')) return kana + (kansai ? 'んといて' : 'んで');
+      if (!kansai) return kana + 'ん' + (tail === 'くて' ? 'で' : past(tail));
+      const n = 'きぎじちびみりい'.includes(kana) ? 'ひん' : 'へん';
+      return kana + n + (tail === 'くて' ? 'くて' : past(tail));
+    }];
 }
 
-const LEX = {
-  kansai: {
-    '本当に': 'ほんまに', 'ほんとうに': 'ほんまに', 'ほんとに': 'ほんまに',
-    '本当': 'ほんま', 'ほんとう': 'ほんま', 'ほんと': 'ほんま',
-    'だめ': 'あかん', 'ダメ': 'あかん', '駄目': 'あかん',
-    'なぜ': 'なんで', 'どうして': 'なんで',
-    '馬鹿': 'アホ', 'バカ': 'アホ', 'ばか': 'アホ',
-    'いくら': 'なんぼ',
-    '違う': 'ちゃう', '違い': 'ちゃい',
-    'すごく': 'めっちゃ', 'とても': 'めっちゃ', 'めちゃくちゃ': 'めっちゃ', 'めちゃ': 'めっちゃ', '非常に': 'めっちゃ'
-  },
-  hakata: {
-    '本当に': 'ほんなこつ', 'ほんとうに': 'ほんなこつ', 'ほんとに': 'ほんなこつ',
-    'だめ': 'いかん', 'ダメ': 'いかん', '駄目': 'いかん',
-    'なぜ': 'なんで', 'どうして': 'なんで',
-    'すごく': 'ばり', 'とても': 'ばり', 'めちゃくちゃ': 'ばり', 'めちゃ': 'ばり', 'めっちゃ': 'ばり', '非常に': 'ばり'
-  }
-};
-
-const CLEANUP = {
+const RULES = {
   kansai: [
-    [/(じゃ|では)なかった/g, 'ちゃうかった'],
-    [/(じゃ|では)ない/g, 'ちゃう'],
-    [/じゃん/g, 'やん'],
-    [/あかんや(?=[。！？!?、\s]|$)/g, 'あかん'],
-    [/あかんや([でな])/g, 'あかん$1']
+    // よく使う言葉
+    R('ありがとう(ございます|ございました)?', 'おおきに'),
+    R('(本当|ほんとう|ほんと)に', 'ほんまに'), R('本当|ほんとう|ほんと', 'ほんま'),
+    R('(だめ|ダメ|駄目)(だ|です)?', 'あかん'), R('なぜ|どうして', 'なんで'), R('馬鹿|バカ|ばか', 'アホ'),
+    R('いくら', 'なんぼ'), R('違います', 'ちゃいます'), R('違う', 'ちゃう'),
+    R('すごく|とても|めちゃくちゃ|非常に', 'めっちゃ'), R('(面白|おもしろ)(?=[いかく])', 'おもろ'),
+    R('(?<!わ)(いい|良い|よい)(?!え)', 'ええ'),
+    // 〜じゃない
+    R('(じゃ|では)なかった', 'ちゃうかった'), R('(じゃ|では)ない', 'ちゃう'), R('じゃん', 'やん'),
+    // 〜ている → 〜てる
+    [/てい?な(い|かった)/g, (m, t) => 'てへん' + past(t)],
+    R('てい(る|た|ます|まし)', 'て$1'), R('でい(る|た)', 'で$1'),
+    // いる → おる
+    [new RegExp(IRU + 'いな(い|かった)', 'g'), (m, p, t) => p + 'おらへん' + past(t)],
+    R(IRU + 'いる', '$1おる'), R(IRU + 'いた(?![いだ])', '$1おった'),
+    // する・来る・見る など
+    R('(?<!だら|少|おい)しないで(ください)?', 'せんといて'), R('(来|こ)ないで(ください)?', '来んといて'),
+    [/(?<!だら|少|おい)しな(い|かった)/g, (m, t) => 'せえへん' + past(t)],
+    [/(来|こ)な(い|かった)/g, (m, k, t) => 'けえへん' + past(t)],
+    [/(見|寝|出|着)な(い|かった)/g, (m, k, t) => k + ('見着'.includes(k) ? 'いひん' : 'えへん') + past(t)],
+    negation(true),
+    R('ません', 'まへん'),
+    // 〜たんだ → 〜てん、〜なんだ → 〜なんや、〜んだ・〜のだ → 〜ねん
+    R(`([ただ])(ん|の)(だ|です)よ${END}`, (m, t) => (t === 'た' ? 'てんで' : 'でんで')),
+    [new RegExp(`([ただ])(ん|の)(だ|です)([ねな]?)${END}`, 'g'), (m, t, n, c, ne) => (t === 'た' ? 'てん' : 'でん') + (ne ? 'な' : '')],
+    R(`なん(だ|です)よ${END}`, 'なんやで'), R(`なん(だ|です)([ねな]?)${END}`, 'なんや$2'),
+    R(`(${EXPL})(ん|の)(だ|です)よね${END}`, '$1ねんな'), R(`(${EXPL})(ん|の)(だ|です)よ${END}`, '$1ねんで'),
+    R(`(${EXPL})(ん|の)(だ|です)[ねな]${END}`, '$1ねんな'), R(`(${EXPL})(ん|の)(だ|です)${END}`, '$1ねん'),
+    // だった・だろう・ですか
+    R('だった|でした', 'やった'), R('だろう|でしょう', 'やろ'),
+    R('(?<![れら嫌])(い|ええ)ですか', '$1ん'), R('ですか', 'なん'),
+    // 形容詞のあとの「です」は落とす（いいです・寒いです）
+    R(`(?<![れら嫌])(い|ええ|よか)ですよね${END}`, '$1よな'), R(`(?<![れら嫌])(い|ええ|よか)ですよ${END}`, '$1で'),
+    R(`(?<![れら嫌])(い|ええ|よか)です[ねな]${END}`, '$1な'), R(`(?<![れら嫌])(い|ええ|よか)です${END}`, '$1'),
+    // そうだ → せや
+    R(`そう(だ|です)(?=[よね]|${END.slice(3, -1)})`, 'せ$1'),
+    // だ・です → や
+    R(`${NOT_COPULA}(だ|です)よね${END}`, 'やんな'), R(`${NOT_COPULA}(だ|です)よ${END}`, 'やで'),
+    R(`${NOT_COPULA}(だ|です)[ねな]${END}`, 'やな'), R(`${NOT_COPULA}(だ|です)${END}`, 'や'),
+    R(`${NOT_COPULA}(だ|です)(?=から|けど|けれど|し[、。\\s]|って)`, 'や'),
+    // 文の終わり
+    R(`よね${END}`, 'よな'), R(`(?<=う)よ${END}`, 'や'), R(`(?<!ま[すし]|[やで])よ${END}`, 'で'),
+    R(`(?<!ます|まし)ね${END}`, 'な'),
+    R('(?<=[るうくぐすつぬぶむたい])の(?=[？?])', 'ん'), R('(?<=[るうくぐすつぬぶむたい])の(?=[。！!]|$)', 'ねん'),
+    // 仕上げ
+    R(`あかんや${END}`, 'あかん'), R('あかんや([でな])', 'あかん$1')
   ],
+
   hakata: [
-    [/(じゃ|では)なかった/g, 'やなかった'],
-    [/(じゃ|では)ない/g, 'やない'],
-    [/じゃん/g, 'やん'],
-    [/いかんや(?=[。！？!?、\s]|$)/g, 'いかん'],
-    [/いかんやね/g, 'いかんね']
+    // よく使う言葉
+    R('(本当|ほんとう|ほんと)に', 'ほんなこつ'),
+    R('(だめ|ダメ|駄目)(だ|です)?', 'いかん'), R('なぜ|どうして', 'なんで'),
+    R('すごく|とても|めちゃくちゃ|めっちゃ|非常に', 'ばり'),
+    R('(?<!わ)(いい|良い|よい)(?!え)', 'よか'),
+    // 〜じゃない
+    R('(じゃ|では)なかった', 'やなかった'), R('(じゃ|では)ない', 'やない'), R('じゃん', 'やん'),
+    // 〜ている → 〜とる
+    R(`(?<!${TERU_VERB})てい?なかった`, 'とらんかった'), R(`(?<!${TERU_VERB})てい?ない`, 'とらん'),
+    R('ている', 'とる'), R('ていた', 'とった'), R('ていて', 'とって'), R('てい(ます|まし)', 'とり$1'),
+    R(`(?<!${TERU_VERB})てる`, 'とる'), R(`(?<!${TERU_VERB})てた`, 'とった'),
+    R('でいる', 'どる'), R('でいた', 'どった'), R('(?<=ん)でる', 'どる'), R('(?<=ん)でた', 'どった'),
+    [/(?<=ん)でな(い|かった)/g, (m, t) => 'どらん' + past(t)],
+    // いる → おる
+    [new RegExp(IRU + 'いな(い|かった)', 'g'), (m, p, t) => p + 'おらん' + past(t)],
+    R(IRU + 'いる', '$1おる'), R(IRU + 'いた(?![いだ])', '$1おった'),
+    // する・来る
+    R('(?<!だら|少|おい)しないで(ください)?', 'せんで'), R('(来|こ)ないで(ください)?', '来んで'),
+    [/(?<!だら|少|おい)しな(い|かった)/g, (m, t) => 'せん' + past(t)],
+    [/(来|こ)な(い|かった)/g, (m, k, t) => 'こん' + past(t)],
+    [/(見|寝|出|着)な(い|かった)/g, (m, k, t) => k + 'ん' + past(t)],
+    negation(false),
+    // 〜んだ・〜のだ → 〜と、〜なんだ → 〜なんよ
+    R(`なん(だ|です)よ?${END}`, 'なんよ'), R(`なん(だ|です)ね${END}`, 'なんやね'),
+    R(`([ただ])(ん|の)(だ|です)よ${END}`, '$1とよ'), R(`([ただ])(ん|の)(だ|です)(ね?)${END}`, '$1と$4'),
+    R(`(${EXPL})(ん|の)(だ|です)よね${END}`, '$1とやろ'), R(`(${EXPL})(ん|の)(だ|です)よ${END}`, '$1とよ'),
+    R(`(${EXPL})(ん|の)(だ|です)ね${END}`, '$1とね'), R(`(${EXPL})(ん|の)(だ|です)${END}`, '$1と'),
+    // だった・だろう・ですか
+    R('だった|でした', 'やった'), R('だろう|でしょう', 'やろ'),
+    R('(?<![れら嫌])(い|よか)ですか', '$1と'), R('ですか', 'なん'),
+    // 形容詞のあとの「です」は落とす
+    R(`(?<![れら嫌])(い|ええ|よか)ですよね${END}`, '$1やろ'), R(`(?<![れら嫌])(い|ええ|よか)ですよ${END}`, '$1よ'),
+    R(`(?<![れら嫌])(い|ええ|よか)です(ね?)${END}`, '$1$2'),
+    // だけど → ばってん、だ・です → や
+    R('だけど|だけれど(?:も)?|ですけど', 'ばってん'),
+    R(`${NOT_COPULA}(だ|です)よね${END}`, 'やろ'), R(`${NOT_COPULA}(だ|です)よ${END}`, 'ばい'),
+    R(`${NOT_COPULA}(だ|です)ね${END}`, 'やね'), R(`${NOT_COPULA}(だ|です)${END}`, 'や'),
+    R(`${NOT_COPULA}(だ|です)(?=から|し[、。\\s]|って)`, 'や'),
+    // から → けん、けど → ばってん
+    R('(?<=[るたいうすくつぬむぶぐんや]|ます|でし)から(?![だでの])', 'けん'),
+    R('けれども|けれど|けど', 'ばってん'),
+    // 形容詞の「か」言葉（寒か・難しか・せからしか）
+    R(`うるさい(?=[ねよ]|${END.slice(3, -1)})`, 'せからしか'),
+    R(`(?<=[一-龥]|[一-龥]し|おいし|すご|ひど|うま|まず|きつ|しんど|やば|えら|つら|くさ|ねむ|さむ|あつ|かわい)(?<!(?:${NOT_ADJ}))い(?=[ねよ]?${END})`, 'か'),
+    // 文の終わり
+    R(`よね${END}`, 'やろ'), R(`(?<=う)よ${END}`, 'や'), R(`(?<!ま[すし]|か|なん|と)よ${END}`, 'ばい'),
+    R('(?<=[るうくぐすつぬぶむたいん])の(?=[？?])', 'と'), R('(?<=[るうくぐすつぬぶむたい])の(?=[。！!]|$)', 'とよ'),
+    // 仕上げ
+    R(`いかんや${END}`, 'いかん'), R('いかんやね', 'いかんね')
   ]
 };
 
-export const MORPH_DIALECTS = ['kansai', 'hakata'];
+export const RULE_DIALECTS = Object.keys(RULES);
 
-export function convertTokens(tokens, dialect) {
-  const K = dialect === 'kansai';
-  const lex = LEX[dialect];
-  const out = [];
-  const pushed = []; // out と同じ位置に、元のトークン
-  const put = (s, t) => { out.push(s); pushed.push(t); };
-
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i], prev = tokens[i - 1], next = tokens[i + 1], next2 = tokens[i + 2];
-    const s = t.surface_form;
-
-    // ありがとう（ございます／ございました）
-    if (K && t.basic_form === 'ありがとう') {
-      let j = i;
-      if (isAux(tokens[j + 1], 'ござる')) {
-        j++;
-        while (tokens[j + 1] && tokens[j + 1].pos === '助動詞') j++;
-      }
-      put('おおきに', t); i = j; continue;
-    }
-
-    // 決まった言い換え
-    if (lex[s] && !(s === '違う' && !isVerb(t))) { put(lex[s], t); continue; }
-
-    // 「いいじゃん」の「いい」は動詞「言う」と解析されることがある
-    if (isVerb(t) && t.basic_form === 'いう' && s === 'いい' && next && /^じゃ/.test(next.surface_form)) {
-      put(K ? 'ええ' : 'よか', t); continue;
-    }
-
-    // 形容詞
-    if (t.pos === '形容詞') {
-      const f = t.conjugated_form;
-      if (['いい', '良い', 'よい'].includes(s) && f === '基本形') { put(K ? 'ええ' : 'よか', t); continue; }
-      if (K && /^(面白|おもしろ)/.test(s)) { put(s.replace(/^(面白|おもしろ)/, 'おもろ'), t); continue; }
-      if (!K && f === '基本形' && t.pos_detail_1 === '自立' && s.endsWith('い') && s !== 'ない'
-        && (isEnd(next) || isFinalPart(next, 'ね', 'よ', 'な'))) {
-        put(s === 'うるさい' ? 'せからしか' : s.slice(0, -1) + 'か', t); continue;
-      }
-      put(s, t); continue;
-    }
-
-    // 「〜ている」「〜てる」
-    if (isTeIru(t, prev)) {
-      if (K) { put(s.slice(1), t); continue; } // てる・てた・てへん
-      out[out.length - 1] = prev.surface_form === 'て' ? 'と' : 'ど';
-      put(iruLike('', t, next), t); continue; // とる・とった・とらん
-    }
-    if (isTeru(t)) {
-      if (K) { put(s, t); continue; }
-      if (t.conjugated_form.startsWith('連用') && !isAux(next, 'た') && !isAux(next, 'ます')) { put(s, t); continue; }
-      put(iruLike(t.basic_form === 'てる' ? 'と' : 'ど', t, next), t); continue;
-    }
-
-    // 「いる」→「おる」
-    if (isVerb(t) && t.pos_detail_1 === '自立' && t.basic_form === 'いる' && t.conjugated_type.startsWith('一段')) {
-      put(iruLike('お', t, next), t); continue;
-    }
-
-    // 打ち消し（〜ない）の前の動詞
-    if (isMizenBeforeNai(t, next)) {
-      let stem = s;
-      if (t.conjugated_type.startsWith('サ変')) stem = K ? 'せえ' : 'せ';
-      else if (t.conjugated_type.startsWith('カ変')) stem = K ? 'けえ' : 'こ';
-      else if (K && t.conjugated_type.startsWith('一段') && s.length === 1) {
-        const v = t.reading.slice(-1);
-        if (I_ROW.includes(v)) stem = s + 'い';
-        else if (E_ROW.includes(v)) stem = s + 'え';
-      }
-      put(stem, t); continue;
-    }
-    // 打ち消しの「ない」
-    if (isNaiAux(t) && isVerb(prev) && prev.conjugated_form.startsWith('未然')) {
-      const lastStem = out[out.length - 1];
-      const hi = K && /い$/.test(lastStem) && I_ROW.includes((prev.reading || '').slice(-1)) && prev.surface_form.length === 1;
-      if (K) {
-        const n = hi ? 'ひん' : 'へん';
-        put(s === 'ない' ? n : s === 'なかっ' ? n + 'かっ' : n + 'く', t);
-      } else if (s === 'なく' && isPart(next, 'て')) {
-        put('んで', t); i++;
-      } else {
-        put(s === 'ない' ? 'ん' : s === 'なかっ' ? 'んかっ' : 'なく', t);
-      }
-      continue;
-    }
-    // 〜ません
-    if (K && isAux(t, 'ます') && s === 'ませ' && next && next.surface_form === 'ん') {
-      put('まへん', t); i++; continue;
-    }
-
-    // だ・です
-    if (isAux(t, 'だ') || isAux(t, 'です')) {
-      const f = t.conjugated_form;
-      if (f.startsWith('連用') && isAux(next, 'た')) { put('やっ', t); continue; } // だった・でした
-      if (f.startsWith('未然') && isAux(next, 'う')) { put('やろ', t); i++; continue; } // だろう・でしょう
-      if (f !== '基本形') { put(s, t); continue; }
-      if (isAux(t, 'です') && isPart(next, 'か')) { put('なん', t); i++; continue; } // ですか
-      const yone = isFinalPart(next, 'よ') && isFinalPart(next2, 'ね');
-      const yo = !yone && isFinalPart(next, 'よ');
-      const ne = isFinalPart(next, 'ね', 'な');
-      const atEnd = isEnd(next) || yone || yo || ne;
-      if (atEnd && prev && prev.pos === '形容詞') {
-        // 形容詞のあとの「です」は落とす（いいですね → ええな／よかね）
-        if (K) put(yone ? 'よな' : yo ? 'で' : ne ? 'な' : '', t);
-        else put(yone ? 'やろ' : yo ? 'ばい' : ne ? 'ね' : '', t);
-      } else if (atEnd && isNoN(prev)) {
-        // 行くんだ → 行くねん（関西）／行くと（博多）
-        out[out.length - 1] = '';
-        if (K) put(yone ? 'ねんな' : yo ? 'ねんで' : ne ? 'ねんな' : 'ねん', t);
-        else put(yone ? 'とやろ' : yo ? 'とよ' : ne ? 'とね' : 'と', t);
-      } else {
-        if (K && prev && prev.surface_form === 'そう' && prev.pos === '副詞') out[out.length - 1] = 'せ';
-        if (K) put(yone ? 'やんな' : yo ? 'やで' : ne ? 'やな' : 'や', t);
-        else put(yone ? 'やろ' : yo ? 'ばい' : ne ? 'やね' : 'や', t);
-      }
-      if (yone) i += 2; else if (yo || ne) i++;
-      continue;
-    }
-
-    // 終助詞
-    if (t.pos === '助詞' && t.pos_detail_1 === '終助詞') {
-      const afterMasu = isAux(prev, 'ます');
-      if (s === 'よ' && isFinalPart(next, 'ね')) {
-        put(K ? 'よな' : 'やろ', t); i++; continue;
-      }
-      if (s === 'よ' && !afterMasu) {
-        put(isAux(prev, 'う') ? 'や' : K ? 'で' : 'ばい', t); continue;
-      }
-      if (s === 'ね' && K && !afterMasu) { put('な', t); continue; }
-      if (s === 'の' && isEnd(next)) {
-        const q = next && /[？?]/.test(next.surface_form);
-        const afterN = /ん$/.test(out[out.length - 1] || '');
-        put(K ? (q ? (afterN ? 'の' : 'ん') : 'ねん') : (q ? 'と' : 'とよ'), t); continue;
-      }
-      put(s, t); continue;
-    }
-
-    // 接続助詞（博多：から→けん、けど→ばってん）
-    if (!K && t.pos === '助詞' && t.pos_detail_1 === '接続助詞') {
-      if (s === 'から') { put('けん', t); continue; }
-      if (['けど', 'けれど', 'けれども'].includes(s)) { put('ばってん', t); continue; }
-    }
-
-    put(s, t);
-  }
-
-  let text = out.join('');
-  CLEANUP[dialect].forEach(([re, to]) => { text = text.replace(re, to); });
-  return text;
+export function convertText(text, dialect) {
+  const rules = RULES[dialect];
+  if (!rules) return text;
+  return rules.reduce((s, [re, to]) => s.replace(re, to), text);
 }
