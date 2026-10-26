@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>方言ボイス</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root {
+  --bg: #0E1117;
+  --panel: #161B24;
+  --fg: #EEF1F6;
+  --muted: #A3ADBF;
+  --line: rgba(255,255,255,.16);
+  --accent: #FF7452;
+  --on-accent: #1B0F0B;
+  --ok: #5BB5A2;
+  --warn: #D9B450;
+  --rec: #D8485B;
+  --font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
+body { min-height: 100dvh; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+main {
+  max-width: 560px; margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(32px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  display: grid; gap: 18px;
+}
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 8px; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(28px, 8vw, 38px); margin: 0; letter-spacing: .02em; }
+h2 { font-family: var(--font-display); font-weight: 800; font-size: 20px; margin: 0; }
+p { margin: 0; line-height: 1.7; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+
+.chip-btn { min-height: 40px; padding: 0 14px; border-radius: 20px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; font-weight: 700; }
+.mode { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+.dot.ok { background: var(--ok); }
+
+.dialects { display: flex; flex-wrap: wrap; gap: 8px; }
+.dialects button { min-height: 40px; padding: 0 14px; border-radius: 20px; border: 1px solid var(--line); background: transparent; font-size: 14px; font-weight: 500; }
+.dialects button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+.dialects button:disabled { opacity: .35; }
+
+.recwrap { display: grid; justify-items: center; gap: 12px; padding: 8px 0; }
+.recbtn {
+  width: 112px; height: 112px; border-radius: 50%;
+  border: 4px solid #fff; background: var(--accent);
+  box-shadow: inset 0 0 0 6px var(--bg);
+  display: grid; place-items: center; transition: transform .15s;
+}
+.recbtn .ico { width: 30px; height: 30px; border-radius: 50%; background: #fff; transition: border-radius .15s; }
+.recbtn.on { background: var(--rec); }
+.recbtn.on .ico { border-radius: 6px; width: 26px; height: 26px; }
+.recbtn:disabled { opacity: .45; }
+.meter { width: 180px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--fg); transition: width .08s linear; }
+#status { min-height: 1.7em; text-align: center; font-size: 14px; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: grid; gap: 10px; }
+.label { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: .04em; }
+.out { font-family: var(--font-display); font-weight: 800; font-size: clamp(22px, 6.4vw, 28px); line-height: 1.5; text-wrap: pretty; }
+textarea { width: 100%; min-height: 64px; resize: vertical; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; line-height: 1.6; font-size: 16px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { min-height: 46px; border-radius: 12px; border: 1px solid var(--line); background: transparent; font-weight: 700; font-size: 15px; padding: 0 18px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn:disabled { opacity: .45; }
+audio { width: 100%; }
+.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+
+dialog { width: min(560px, 100vw); max-width: 100vw; max-height: 100dvh; overflow: auto; margin: auto; padding: 0; border: 0; background: var(--bg); color: var(--fg); }
+dialog::backdrop { background: rgba(0,0,0,.6); }
+.sheet { padding: 20px 16px calc(24px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 18px; }
+.sheet section { display: grid; gap: 10px; }
+.field { display: grid; gap: 6px; }
+.field input[type="password"], .field input[type="text"] { min-height: 46px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; font-size: 16px; width: 100%; }
+.script { background: var(--panel); border-radius: 12px; padding: 14px; line-height: 1.9; font-size: 15px; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.6; }
+.check input { width: 20px; height: 20px; margin-top: 3px; flex: none; }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .recbtn, .recbtn .ico, .meter i { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>方言ボイス</h1>
+      <div class="mode"><span class="dot" id="modedot"></span><span id="modetext">お試しモード</span></div>
+    </div>
+    <button class="chip-btn" id="opensettings" type="button">設定</button>
+  </header>
+
+  <p class="muted">話した言葉を、あなたの声のまま別の方言でしゃべり直します。方言を選んで、ボタンを押して話してください。</p>
+
+  <div class="dialects" id="dialects" role="group" aria-label="変換先の方言"></div>
+
+  <div class="recwrap">
+    <button class="recbtn" id="rec" type="button" aria-label="録音を始める"><span class="ico"></span></button>
+    <div class="meter" aria-hidden="true"><i id="level"></i></div>
+    <p id="status" aria-live="polite">ボタンを押して話してください（最長30秒）</p>
+  </div>
+
+  <div class="card" id="resultcard" hidden>
+    <div class="label">あなたが話した言葉（直して再変換できます）</div>
+    <textarea id="src" rows="2"></textarea>
+    <div class="label" id="dlabel">方言</div>
+    <div class="out" id="dst"></div>
+    <audio id="player" controls hidden></audio>
+    <div class="row">
+      <button class="btn primary" id="replay" type="button">もう一度聞く</button>
+      <button class="btn" id="reconvert" type="button">この文で変換し直す</button>
+      <button class="btn" id="save" type="button" hidden>音声を保存</button>
+    </div>
+    <span class="badge" id="voicebadge"></span>
+  </div>
+</main>
+
+<dialog id="settings">
+  <div class="sheet">
+    <div class="row" style="justify-content: space-between; align-items: center;">
+      <h2>設定</h2>
+      <button class="chip-btn" id="closesettings" type="button">閉じる</button>
+    </div>
+
+    <section>
+      <p class="small muted">「あなたの声のまま」しゃべらせるには、声のクローンができる ElevenLabs（Starter プラン以上）と、方言に言い直す Claude の API キーを使います。キーはこの端末のブラウザにだけ保存され、それぞれの公式 API に直接送られます。自分専用のキーを使い、このページを他人と共有しないでください。キーがないときは、端末の合成音声と簡易ルールで動くお試しモードになります（あなたの声にはなりません）。</p>
+      <div class="field">
+        <label class="label" for="anthkey">Claude API キー（方言への言い直し）</label>
+        <input type="password" id="anthkey" autocomplete="off" placeholder="sk-ant-…">
+      </div>
+      <div class="field">
+        <label class="label" for="elkey">ElevenLabs API キー（文字起こしと、あなたの声での読み上げ）</label>
+        <input type="password" id="elkey" autocomplete="off" placeholder="xi-…">
+      </div>
+      <div class="row">
+        <button class="btn primary" id="savekeys" type="button">キーを保存</button>
+        <button class="btn" id="clearkeys" type="button">キーを消す</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>自分の声を登録</h2>
+      <p class="small muted" id="voicestate">まだ登録していません。</p>
+      <p class="small muted">静かな場所で、下の文章をふだんの話し方で読んでください。30秒以上あると似やすくなります。</p>
+      <div class="script">きょうは、ひさしぶりに晴れました。朝ごはんを食べてから、駅まで歩いて、友だちと会いました。駅前の喫茶店でコーヒーを飲みながら、最近あったことを話しました。帰りに本屋に寄って、旅行の本を一冊買いました。来月は、まだ行ったことのない町へ出かけて、おいしいものをたくさん食べたいと思っています。</div>
+      <label class="check"><input type="checkbox" id="consent"><span>これは私自身の声で、私の声のクローンを作ることに同意します。</span></label>
+      <div class="row">
+        <button class="btn primary" id="voicerec" type="button" disabled>読み上げを録音</button>
+        <button class="btn" id="voicedel" type="button" hidden>登録を消す</button>
+      </div>
+      <p class="small" id="voicestatus" aria-live="polite"></p>
+    </section>
+  </div>
+</dialog>
+
+<script type="module">
+import { convertText, RULE_DIALECTS } from './dialect-rules.js';
+const $ = (id) => document.getElementById(id);
+const KEY = { anth: 'hogenVoice.anthropicKey', el: 'hogenVoice.elevenKey', voice: 'hogenVoice.voiceId', dialect: 'hogenVoice.dialect' };
+const store = {
+  get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+  set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+};
+const EL = 'https://api.elevenlabs.io/v1';
+const CLAUDE_MODEL = 'claude-opus-5-5';
+const MAX_SEC = 30;
+
+/* ---------- dialects ---------- */
+// rules: tiny offline fallback (お試しモード) – the API path uses Claude instead.
+const tail = '(?=[。、！？!?\\s]|$)';
+const R = (src, to) => [new RegExp(src, 'g'), to];
+const DIALECTS = [
+  { id: 'kansai', name: '関西弁', hint: '大阪の関西弁', rules: [] }, // 法則は dialect-rules.js
+  { id: 'kyoto', name: '京都弁', hint: '京都のはんなりした京ことば' },
+  { id: 'hakata', name: '博多弁', hint: '福岡の博多弁', rules: [] }, // 法則は dialect-rules.js
+  { id: 'hiroshima', name: '広島弁', hint: '広島弁', rules: [
+    R('(とても|すごく|すっごく)', 'ぶち'), R('だから', 'じゃけえ'), R('(です|だ)から', 'じゃけえ'), R('から' + tail, 'けえ'),
+    R('だよね', 'じゃろ'), R('だよ', 'じゃけ'), R('だね', 'じゃのう'), R('している', 'しよる'),
+    R('(ダメ|だめ)', 'いけん'), R('ですね', 'じゃのう'),
+    R('([かがさたなばまらわ])ない', '$1ん'), R('(です|だ)' + tail, 'じゃ')
+  ] },
+  { id: 'nagoya', name: '名古屋弁', hint: '名古屋弁', rules: [
+    R('(とても|すごく|すっごく)', 'でら'), R('だよね', 'だがね'), R('だよ', 'だがや'), R('だね', 'だなも'),
+    R('ですか', 'だぎゃ？'), R('している', 'しとる'), R('いる' + tail, 'おる'), R('(じゃ|では)ない', 'じゃにゃあ'),
+    R('ない' + tail, 'にゃあ'), R('(です|だ)' + tail, 'だがや')
+  ] },
+  { id: 'tosa', name: '土佐弁', hint: '高知の土佐弁', rules: [
+    R('(とても|すごく|すっごく)', 'まっこと'), R('だから', 'やき'), R('(です|だ)から', 'やき'), R('から' + tail, 'き'),
+    R('している', 'しゆう'), R('だよ', 'ぜよ'), R('(だ|です)ね', 'やね'),
+    R('([かがさたなばまらわ])ない', '$1ん'), R('(です|だ)' + tail, 'じゃ')
+  ] },
+  { id: 'kagoshima', name: '鹿児島弁', hint: '鹿児島弁（薩摩ことば）' },
+  { id: 'tohoku', name: '東北弁', hint: '宮城・仙台あたりの東北弁', rules: [
+    R('(とても|すごく|すっごく)', 'いぎなり'), R('かわいい', 'めんこい'), R('だろう|でしょう', 'だべ'),
+    R('だよね', 'だべさ'), R('そうだね|そうです', 'んだ'), R('だよ', 'だっちゃ'), R('(です|だ)' + tail, 'だっちゃ')
+  ] },
+  { id: 'tsugaru', name: '津軽弁', hint: '青森の津軽弁' },
+  { id: 'hokkaido', name: '北海道弁', hint: '北海道弁' },
+  { id: 'okinawa', name: '沖縄の方言', hint: '沖縄の方言（ウチナーヤマトグチ。聞いて意味が分かる程度に）' },
+  { id: 'hyojun', name: '標準語', hint: '丁寧すぎない標準語の話し言葉', rules: [] }
+];
+let dialect = DIALECTS.find((d) => d.id === store.get(KEY.dialect)) || DIALECTS[0];
+
+/* ---------- state ---------- */
+let anthKey = store.get(KEY.anth), elKey = store.get(KEY.el), voiceId = store.get(KEY.voice);
+let recorder = null, chunks = [], recStream = null, recTimer = null, recStart = 0, recPurpose = 'talk';
+let actx = null, analyser = null, meterRaf = 0;
+let lastAudio = null, lastAudioUrl = null, busy = false;
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null, recogText = '';
+
+const fullMode = () => !!(anthKey && elKey && voiceId);
+
+/* ---------- UI helpers ---------- */
+function setStatus(t) { $('status').textContent = t; }
+function renderMode() {
+  $('modedot').classList.toggle('ok', fullMode());
+  $('modetext').textContent = fullMode() ? 'あなたの声モード'
+    : (anthKey && elKey) ? '声の登録待ち（設定から登録）' : 'お試しモード（端末の合成音声）';
+  $('voicestate').textContent = voiceId ? '登録済みです。録り直すと新しい声に置き換わります。' : 'まだ登録していません。';
+  $('voicedel').hidden = !voiceId;
+  $('voicerec').disabled = !(elKey && $('consent').checked);
+  [...$('dialects').children].forEach((b, i) => {
+    const d = DIALECTS[i];
+    b.setAttribute('aria-pressed', String(d === dialect));
+    b.disabled = !anthKey && !d.rules;
+    b.title = b.disabled ? 'お試しモードでは使えません（Claude の API キーが必要です）' : '';
+  });
+  if (!anthKey && !dialect.rules) { dialect = DIALECTS[0]; renderMode(); }
+}
+function buildDialects() {
+  $('dialects').innerHTML = '';
+  DIALECTS.forEach((d) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = d.name;
+    b.addEventListener('click', () => { dialect = d; store.set(KEY.dialect, d.id); renderMode(); });
+    $('dialects').appendChild(b);
+  });
+}
+
+/* ---------- audio ---------- */
+function ensureCtx() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === 'suspended') actx.resume();
+  return actx;
+}
+function startMeter(stream) {
+  const ctx = ensureCtx();
+  analyser = ctx.createAnalyser(); analyser.fftSize = 512;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const buf = new Uint8Array(analyser.fftSize);
+  const tick = () => {
+    analyser.getByteTimeDomainData(buf);
+    let peak = 0; for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128));
+    $('level').style.width = Math.min(100, peak / 0.9) + '%';
+    meterRaf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+function stopMeter() { cancelAnimationFrame(meterRaf); $('level').style.width = '0'; analyser = null; }
+
+function pickMime() {
+  const types = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'];
+  return (window.MediaRecorder && MediaRecorder.isTypeSupported) ? types.find((t) => MediaRecorder.isTypeSupported(t)) || '' : '';
+}
+
+async function startRecording(purpose) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nomedia');
+  recPurpose = purpose;
+  recStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  chunks = [];
+  const mime = pickMime();
+  recorder = new MediaRecorder(recStream, mime ? { mimeType: mime } : undefined);
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.start(250);
+  recStart = performance.now();
+  startMeter(recStream);
+  if (purpose === 'talk' && !elKey && SR) {
+    recogText = '';
+    recog = new SR(); recog.lang = 'ja-JP'; recog.interimResults = true; recog.continuous = true;
+    recog.onresult = (e) => {
+      let s = ''; for (let i = 0; i < e.results.length; i++) s += e.results[i][0].transcript;
+      recogText = s; setStatus('「' + s + '」');
+    };
+    recog.onerror = () => {};
+    try { recog.start(); } catch (e) { recog = null; }
+  }
+}
+
+function stopRecording() {
+  return new Promise((resolve) => {
+    if (!recorder) return resolve(null);
+    const r = recorder; recorder = null;
+    r.onstop = () => {
+      recStream.getTracks().forEach((t) => t.stop());
+      stopMeter();
+      resolve(new Blob(chunks, { type: r.mimeType || 'audio/webm' }));
+    };
+    r.stop();
+    if (recog) { try { recog.stop(); } catch (e) { /* ignore */ } }
+  });
+}
+
+function extFor(type) { return type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'; }
+
+/* ---------- ElevenLabs ---------- */
+async function elFetch(path, opts) {
+  const res = await fetch(EL + path, { ...opts, headers: { 'xi-api-key': elKey, ...(opts.headers || {}) } });
+  if (!res.ok) {
+    let detail = ''; try { const j = await res.json(); detail = (j.detail && (j.detail.message || j.detail.status || j.detail)) || ''; } catch (e) { /* ignore */ }
+    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    err.status = res.status; throw err;
+  }
+  return res;
+}
+async function transcribe(blob) {
+  const fd = new FormData();
+  fd.append('model_id', 'scribe_v1');
+  fd.append('language_code', 'jpn');
+  fd.append('tag_audio_events', 'false');
+  fd.append('file', blob, 'speech.' + extFor(blob.type));
+  const j = await (await elFetch('/speech-to-text', { method: 'POST', body: fd })).json();
+  return (j.text || '').trim();
+}
+async function speakAsMe(text) {
+  const res = await elFetch(`/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+    body: JSON.stringify({
+      text, model_id: 'eleven_multilingual_v2',
+      voice_settings: { stability: 0.45, similarity_boost: 0.9, style: 0.2, use_speaker_boost: true }
+    })
+  });
+  return res.blob();
+}
+async function cloneVoice(blob) {
+  const fd = new FormData();
+  fd.append('name', '方言ボイス（自分の声）');
+  fd.append('description', '方言ボイスで本人が登録した自分の声');
+  fd.append('remove_background_noise', 'true');
+  fd.append('files', blob, 'myvoice.' + extFor(blob.type));
+  const j = await (await elFetch('/voices/add', { method: 'POST', body: fd })).json();
+  return j.voice_id;
+}
+async function deleteVoice(id) {
+  try { await elFetch('/voices/' + encodeURIComponent(id), { method: 'DELETE' }); } catch (e) { if (e.status !== 404) throw e; }
+}
+
+/* ---------- Claude ---------- */
+let anthropicClient = null, anthropicFor = '';
+async function claude() {
+  if (!anthropicClient || anthropicFor !== anthKey) {
+    const { default: Anthropic } = await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.132.0/+esm');
+    anthropicClient = new Anthropic({ apiKey: anthKey, dangerouslyAllowBrowser: true });
+    anthropicFor = anthKey;
+  }
+  return anthropicClient;
+}
+const SYSTEM = [
+  'あなたは日本各地の方言に詳しい話し言葉の翻訳者です。',
+  'ユーザーが話した日本語（音声認識の結果なので誤字や句読点の抜けがあります）を、指定された方言の自然な話し言葉に言い直してください。',
+  '- 意味、人称、丁寧さの度合い、話の長さはできるだけ元のまま保つ。足したり省いたりしない。',
+  '- その土地の人がふだん口にする言い回し・語尾・語彙を使う。極端に古い言葉や作り物っぽい誇張は避ける。',
+  '- 音声合成で読み上げるので、読み間違えやすい方言の言葉はひらがなで書き、記号や絵文字、括弧書きは使わない。',
+  '- 出力は言い直した文だけ。説明、注釈、前置き、引用符は一切付けない。'
+].join('\n');
+async function toDialectAI(text, d) {
+  const client = await claude();
+  const msg = await client.beta.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 4000,
+    output_config: { effort: 'low' },
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    system: SYSTEM,
+    messages: [{ role: 'user', content: `方言: ${d.hint}\n\n元の言葉:\n${text}` }]
+  });
+  if (msg.stop_reason === 'refusal') throw new Error('refusal');
+  const out = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  if (!out) throw new Error('empty');
+  return out;
+}
+function toDialectRules(text, d) {
+  if (RULE_DIALECTS.includes(d.id)) return convertText(text, d.id);
+  let s = text;
+  (d.rules || []).forEach(([re, to]) => { s = s.replace(re, to); });
+  return s;
+}
+
+/* ---------- device TTS fallback ---------- */
+function speakDevice(text) {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ja-JP';
+  const v = speechSynthesis.getVoices().find((x) => x.lang && x.lang.startsWith('ja'));
+  if (v) u.voice = v;
+  speechSynthesis.speak(u);
+}
+
+/* ---------- pipeline ---------- */
+function explain(e) {
+  if (e && e.message === 'nomedia') return 'この環境ではマイクが使えません。HTTPS で開いてください。';
+  if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) return 'マイクが使えません。ブラウザの設定でマイクを許可してください。';
+  if (e && e.message === 'refusal') return 'この内容は変換できませんでした。言い方を変えてもう一度お試しください。';
+  if (e && e.status === 401) return 'API キーが正しくないか、権限が足りません。設定を確認してください。' + (e.message ? `（${e.message}）` : '');
+  if (e && e.status === 429) return '混み合っているか、利用上限に達しました。少し待ってからお試しください。';
+  if (e && e.status) return `エラーが起きました（${e.status}${e.message ? '：' + e.message : ''}）`;
+  return 'うまくいきませんでした。通信を確認してもう一度お試しください。' + (e && e.message ? `（${e.message}）` : '');
+}
+
+async function convertAndSpeak(text) {
+  const d = dialect;
+  $('resultcard').hidden = false;
+  $('src').value = text;
+  $('dlabel').textContent = d.name;
+  $('dst').textContent = '…';
+  $('player').hidden = true; $('save').hidden = true;
+  setStatus(`${d.name}に言い直しています…`);
+  const out = anthKey ? await toDialectAI(text, d) : toDialectRules(text, d);
+  $('dst').textContent = out;
+  if (elKey && voiceId) {
+    setStatus('あなたの声で読み上げを作っています…');
+    lastAudio = await speakAsMe(out);
+    if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
+    lastAudioUrl = URL.createObjectURL(lastAudio);
+    const p = $('player'); p.src = lastAudioUrl; p.hidden = false; $('save').hidden = false;
+    $('voicebadge').textContent = 'あなたの声（AI で再現）';
+    try { await p.play(); } catch (e) { /* user can tap play */ }
+  } else {
+    lastAudio = null;
+    $('voicebadge').textContent = '端末の合成音声（あなたの声ではありません）';
+    speakDevice(out);
+  }
+  setStatus('もう一度話すときはボタンを押してください');
+}
+
+async function onTalkStop() {
+  const elapsed = (performance.now() - recStart) / 1000;
+  const blob = await stopRecording();
+  $('rec').classList.remove('on'); $('rec').setAttribute('aria-label', '録音を始める');
+  if (!blob || elapsed < 0.6) { setStatus('短すぎました。もう少し長く話してください'); return; }
+  busy = true; $('rec').disabled = true;
+  try {
+    let text;
+    if (elKey) { setStatus('聞き取っています…'); text = await transcribe(blob); }
+    else {
+      await new Promise((r) => setTimeout(r, 400));
+      text = recogText.trim();
+      if (!SR) throw new Error('このブラウザは音声認識に対応していません。設定で ElevenLabs のキーを入れてください');
+    }
+    if (!text) { setStatus('うまく聞き取れませんでした。もう一度話してください'); return; }
+    await convertAndSpeak(text);
+  } catch (e) {
+    setStatus(explain(e));
+  } finally {
+    busy = false; $('rec').disabled = false;
+  }
+}
+
+$('rec').addEventListener('click', async () => {
+  if (busy) return;
+  ensureCtx();
+  if (recorder && recPurpose === 'talk') { clearTimeout(recTimer); onTalkStop(); return; }
+  if (recorder) return;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  $('player').pause();
+  try {
+    await startRecording('talk');
+  } catch (e) { setStatus(explain(e)); return; }
+  $('rec').classList.add('on'); $('rec').setAttribute('aria-label', '録音を止める');
+  setStatus('聞いています… 話し終わったらもう一度押してください');
+  recTimer = setTimeout(() => { if (recorder && recPurpose === 'talk') onTalkStop(); }, MAX_SEC * 1000);
+});
+
+$('replay').addEventListener('click', () => {
+  const t = $('dst').textContent;
+  if (lastAudioUrl && !$('player').hidden) { const p = $('player'); p.currentTime = 0; p.play().catch(() => {}); }
+  else if (t) speakDevice(t);
+});
+$('reconvert').addEventListener('click', async () => {
+  const t = $('src').value.trim();
+  if (!t || busy) return;
+  busy = true; $('rec').disabled = true; $('reconvert').disabled = true;
+  try { await convertAndSpeak(t); } catch (e) { setStatus(explain(e)); }
+  finally { busy = false; $('rec').disabled = false; $('reconvert').disabled = false; }
+});
+$('save').addEventListener('click', () => {
+  if (!lastAudioUrl) return;
+  const a = document.createElement('a'); a.href = lastAudioUrl; a.download = `hogen-${dialect.id}-${Date.now()}.mp3`;
+  document.body.appendChild(a); a.click(); a.remove();
+});
+
+/* ---------- settings ---------- */
+$('opensettings').addEventListener('click', () => {
+  $('anthkey').value = anthKey; $('elkey').value = elKey;
+  $('settings').showModal();
+});
+$('closesettings').addEventListener('click', () => $('settings').close());
+$('savekeys').addEventListener('click', () => {
+  anthKey = $('anthkey').value.trim(); elKey = $('elkey').value.trim();
+  store.set(KEY.anth, anthKey); store.set(KEY.el, elKey);
+  $('voicestatus').textContent = 'キーを保存しました。';
+  renderMode();
+});
+$('clearkeys').addEventListener('click', () => {
+  anthKey = ''; elKey = ''; $('anthkey').value = ''; $('elkey').value = '';
+  store.set(KEY.anth, ''); store.set(KEY.el, '');
+  $('voicestatus').textContent = 'キーを消しました。';
+  renderMode();
+});
+$('consent').addEventListener('change', renderMode);
+
+$('voicerec').addEventListener('click', async () => {
+  const btn = $('voicerec'), st = $('voicestatus');
+  if (recorder && recPurpose === 'voice') {
+    clearInterval(recTimer);
+    const sec = (performance.now() - recStart) / 1000;
+    const blob = await stopRecording();
+    btn.textContent = '読み上げを録音';
+    if (sec < 10) { st.textContent = '短すぎます。文章を最後まで読んでください（10秒以上）。'; return; }
+    btn.disabled = true; st.textContent = 'あなたの声を登録しています…';
+    try {
+      const old = voiceId;
+      const id = await cloneVoice(blob);
+      voiceId = id; store.set(KEY.voice, id);
+      if (old && old !== id) deleteVoice(old).catch(() => {});
+      st.textContent = '登録できました。方言を選んで話してみてください。';
+    } catch (e) {
+      st.textContent = (e.status === 401 || e.status === 403) && /clon|subscription|plan/i.test(e.message || '')
+        ? '声のクローンには ElevenLabs の Starter プラン以上が必要です。'
+        : explain(e);
+    } finally { btn.disabled = false; renderMode(); }
+    return;
+  }
+  if (recorder) return;
+  try { ensureCtx(); await startRecording('voice'); } catch (e) { st.textContent = explain(e); return; }
+  btn.textContent = '録音を止めて登録';
+  st.textContent = '録音中… 0秒';
+  recTimer = setInterval(() => {
+    const s = Math.floor((performance.now() - recStart) / 1000);
+    st.textContent = `録音中… ${s}秒` + (s >= 30 ? '（もう止めて大丈夫です）' : '');
+    if (s >= 120) btn.click();
+  }, 500);
+});
+$('voicedel').addEventListener('click', async () => {
+  if (!voiceId) return;
+  $('voicestatus').textContent = '登録を消しています…';
+  try { if (elKey) await deleteVoice(voiceId); voiceId = ''; store.set(KEY.voice, ''); $('voicestatus').textContent = '登録を消しました。'; }
+  catch (e) { $('voicestatus').textContent = explain(e); }
+  renderMode();
+});
+
+buildDialects();
+renderMode();
+if ('speechSynthesis' in window) speechSynthesis.getVoices();
+</script>
+</body>
+</html>
