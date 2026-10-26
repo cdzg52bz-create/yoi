@@ -167,6 +167,7 @@ a { color: var(--accent); }
 </dialog>
 
 <script type="module">
+import { convertTokens, MORPH_DIALECTS } from './dialect-rules.js';
 const $ = (id) => document.getElementById(id);
 const KEY = { anth: 'hogenVoice.anthropicKey', el: 'hogenVoice.elevenKey', voice: 'hogenVoice.voiceId', dialect: 'hogenVoice.dialect' };
 const store = {
@@ -404,7 +405,35 @@ async function toDialectAI(text, d) {
   if (!out) throw new Error('empty');
   return out;
 }
-function toDialectRules(text, d) {
+/* ---------- 形態素解析（お試しモードの関西弁・博多弁） ---------- */
+const KUROMOJI = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/';
+let tokenizerP = null;
+const usesMorph = (d) => !anthKey && MORPH_DIALECTS.includes(d.id);
+function loadTokenizer() {
+  if (!tokenizerP) {
+    tokenizerP = new Promise((resolve, reject) => {
+      // kuromoji は辞書の URL を path.join で作るため「https://」が「https:/」に潰れる。読み込みの間だけ直す
+      const open = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+        if (typeof url === 'string') url = url.replace(/^https:\/(?!\/)/, 'https://');
+        return open.call(this, method, url, ...rest);
+      };
+      const done = (fn) => (v) => { XMLHttpRequest.prototype.open = open; fn(v); };
+      const sc = document.createElement('script');
+      sc.src = KUROMOJI + 'build/kuromoji.js';
+      sc.onload = () => window.kuromoji.builder({ dicPath: KUROMOJI + 'dict/' })
+        .build((err, tk) => (err ? done(reject)(err) : done(resolve)(tk)));
+      sc.onerror = () => done(reject)(new Error('kuromoji'));
+      document.head.appendChild(sc);
+    }).catch((e) => { tokenizerP = null; throw e; });
+  }
+  return tokenizerP;
+}
+async function toDialectRules(text, d) {
+  if (MORPH_DIALECTS.includes(d.id)) {
+    try { return convertTokens((await loadTokenizer()).tokenize(text), d.id); }
+    catch (e) { /* 辞書を読み込めないときは下の簡易ルールで */ }
+  }
   let s = text;
   (d.rules || []).forEach(([re, to]) => { s = s.replace(re, to); });
   return s;
@@ -440,7 +469,8 @@ async function convertAndSpeak(text) {
   $('dst').textContent = '…';
   $('player').hidden = true; $('save').hidden = true;
   setStatus(`${d.name}に言い直しています…`);
-  const out = anthKey ? await toDialectAI(text, d) : toDialectRules(text, d);
+  if (usesMorph(d) && !tokenizerP) setStatus('方言の辞書を読み込んでいます…（初回だけ少し時間がかかります）');
+  const out = anthKey ? await toDialectAI(text, d) : await toDialectRules(text, d);
   $('dst').textContent = out;
   if (elKey && voiceId) {
     setStatus('あなたの声で読み上げを作っています…');
@@ -490,6 +520,7 @@ $('rec').addEventListener('click', async () => {
   $('player').pause();
   try {
     await startRecording('talk');
+    if (usesMorph(dialect)) loadTokenizer().catch(() => {});
   } catch (e) { setStatus(explain(e)); return; }
   $('rec').classList.add('on'); $('rec').setAttribute('aria-label', '録音を止める');
   setStatus('聞いています… 話し終わったらもう一度押してください');
